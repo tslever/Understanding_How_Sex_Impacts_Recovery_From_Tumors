@@ -12,8 +12,9 @@ def aggregate_files(base_path, list_of_relative_paths):
         full_path = os.path.join(base_path, relative_path)
         aggregated_content += f"=== {full_path} ===\n"
         try:
-            with open(full_path, 'r', encoding = "utf-8") as file:
-                if full_path.lower().endswith(".csv"):
+            with open(full_path, 'r', encoding = "utf-8", errors = "replace") as file:
+                extension = os.path.splitext(full_path)[1].lower()
+                if extension == ".csv":
                     lines = []
                     for _ in range(0, 4):
                         line = file.readline()
@@ -21,7 +22,7 @@ def aggregate_files(base_path, list_of_relative_paths):
                             break
                         lines.append(line)
                     content = ''.join(lines)
-                elif ful_path.lower().endswith(".owl"):
+                elif extension == ".owl":
                     lines = []
                     for _ in range(0, 59):
                         line = file.readline()
@@ -33,15 +34,15 @@ def aggregate_files(base_path, list_of_relative_paths):
                     content = file.read()
                 aggregated_content += content + "\n\n"
         except FileNotFoundError:
-            raise Exception(f"A file at the following path was not found. {full_path}\n\n")
+            raise Exception(f"A file at the following path was not found. {full_path}")
         except Exception as e:
-            raise Exception(f"The following error occurred when reading {full_path}. {e}\n\n")
+            raise Exception(f"The following error occurred when reading {full_path}. {e}")
     return aggregated_content
 
 
 def replace_import_groups(content):
     pattern = r'(?m)^(import\s+.*\n)+'
-    modified_content = re.sub(pattern, '...\n', content)
+    modified_content = re.sub(pattern, "...\n", content)
     return modified_content
 
 

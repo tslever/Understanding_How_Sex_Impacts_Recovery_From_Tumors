@@ -144,7 +144,7 @@ paths_of_important_files = [
 
     "src/processed_data/icb_data.csv",
     "src/processed_data/processed_clinical_molecular.csv",
-    "src/processed_clinical.csv",
+    "src/processed_data/processed_clinical.csv",
 
     "src/utils/__init__.py",
     "src/utils/README.md",
