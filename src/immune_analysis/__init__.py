@@ -1,0 +1,3 @@
+"""
+Immune Analysis package initialization
+"""
