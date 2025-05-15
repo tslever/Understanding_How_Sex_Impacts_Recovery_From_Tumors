@@ -35,3 +35,4 @@ output_old/*.csv
 src/processed_data
 src/icb_analysis/icb_analysis.py.bak
 tom_levers_temporary_environment
+src/codes.egg-info

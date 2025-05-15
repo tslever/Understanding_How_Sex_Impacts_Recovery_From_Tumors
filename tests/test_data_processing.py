@@ -4,13 +4,13 @@ import subprocess
 import pandas as pd
 import pytest
 
-from src.data_processing import (
+from codes.src.data_processing import (
     create_map_from_qc,
     load_clinical_table,
     merge_molecular_qc,
     integrate_single_cell_scores
 )
-from src.data_processing.utils import clean_id_string, load_csv
+from codes.src.data_processing.utils import clean_id_string, load_csv
 
 
 def test_create_map_from_qc_basic(tmp_path):
