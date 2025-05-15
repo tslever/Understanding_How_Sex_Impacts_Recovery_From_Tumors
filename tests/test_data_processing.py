@@ -4,13 +4,13 @@ import subprocess
 import pandas as pd
 import pytest
 
-from codes.src.data_processing import (
+from data_processing import (
     create_map_from_qc,
     load_clinical_table,
     merge_molecular_qc,
     integrate_single_cell_scores
 )
-from codes.src.data_processing.utils import clean_id_string, load_csv
+from data_processing.utils import clean_id_string, load_csv
 
 
 def test_create_map_from_qc_basic(tmp_path):
@@ -88,7 +88,7 @@ def test_cli_harness(tmp_path, capsys, monkeypatch):
     monkeypatch.setattr(sys, 'argv', [
         'utils.py', str(file)
     ])
-    from src.data_processing.utils import main
+    from data_processing.utils import main
     main()
     captured = capsys.readouterr()
     assert "S1" in captured.out
