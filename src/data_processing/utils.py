@@ -1,6 +1,7 @@
 import pandas as pd
 import os
 import logging
+import re
 
 # Configure logging only if this is the main module
 if __name__ == '__main__':
@@ -10,6 +11,14 @@ if __name__ == '__main__':
     )
     
 logger = logging.getLogger('data_processing.utils')
+
+def clean_id_string(id_str: str) -> str:
+    """Strip suffixes after hyphens or dots, e.g. 'S1-RNA' -> 'S1'."""
+    return re.split(r'[-\.]', id_str)[0]
+
+def load_csv(path: str) -> pd.DataFrame:
+    """Read a CSV file, handling UTF-8 BOM if present."""
+    return pd.read_csv(path, encoding='utf-8-sig')
 
 def create_map_from_qc(qc_file_path, sample_col=None, patient_col=None, clean_ids=True):
     """
