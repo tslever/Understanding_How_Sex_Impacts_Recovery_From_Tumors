@@ -11,11 +11,14 @@ This package provides utilities for:
 # Version information
 __version__ = "1.0.0"
 
-# Make key functions available at package level
-try:
-    from .utils import create_map_from_qc, clean_id_string, load_csv
-    from .clinical import load_clinical_table
-    from .molecular import merge_molecular_qc
-    from .single_cell import integrate_single_cell_scores
-except ImportError:
-    pass  # Allow partial imports if some modules aren't available 
+# Core utilities
+from .utils import create_map_from_qc, clean_id_string, load_csv
+
+# Clinical data processing
+from .clinical import load_clinical_table
+
+# Molecular QC integration
+from .molecular import merge_molecular_qc
+
+# Single-cell score integration
+from .single_cell import integrate_single_cell_scores
