@@ -22,6 +22,25 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+def _find_normalised_dir(root: str):
+    """
+    Look for a directory called “*_NormalizedFiles” anywhere directly under
+    <root>/Clinical_Data.  This is more flexible than hard-coding the exact
+    project identifier (“24PRJ217UVA”).
+    """
+    search_root = _p.Path(root) / "Clinical_Data"
+    matches = list(search_root.glob("*_NormalizedFiles"))
+    if not matches:
+        raise FileNotFoundError(
+            f"No <project>_NormalizedFiles directory found under {search_root}"
+        )
+    # If there are multiple matches keep the first alphabetically – warn once.
+    if len(matches) > 1:
+        logger.warning(
+            f"Multiple *_NormalizedFiles directories found; using {matches[0].name}"
+        )
+    return matches[0]
+
 try:
     from src.data_processing.utils import create_map_from_qc
 except ImportError:
@@ -63,62 +82,51 @@ def is_melanoma_histology_code(code):
     # Check if it's a melanoma code with malignant behavior
     return base_code in MELANOMA_CODES and behavior_code == '3'
 
-def load_clinical_data(base_path):
+def load_clinical_data(base_path: str):
     """
-    Load clinical data from the specified base path and subdirectory.
+    Read the ORIEN normalised clinical workbook(s) and return
+    (clinical_dataframe, warnings)
 
-    Args:
-        base_path (str): Base path to the project directory.
-
-    Returns:
-        dict: Dictionary of DataFrames loaded from the clinical data files.
+    *Never* returns only a single object – callers can safely unpack two values,
+    even on failure.
     """
-    # Define the subdirectory where the files are located
-    sub_dir = os.path.join(base_path, 'Clinical_Data', '24PRJ217UVA_NormalizedFiles')
-    
-    if not os.path.exists(sub_dir):
-        logger.error(f"Subdirectory not found: {sub_dir}")
-        return {}
-    
-    # List all CSV files in the subdirectory
-    files = [f for f in os.listdir(sub_dir) if f.endswith('.csv')]
-    
-    # Define keywords for each data type to match files
-    keyword_mapping = {
-        'patients': ['PatientMaster'],
-        'diagnoses': ['Diagnosis'],
-        'treatments': ['Medications'],  # Assuming 'treatments' corresponds to 'Medications'
-        'outcomes': ['Outcomes'],       # Assuming 'outcomes' corresponds to 'Outcomes'
-        'sequencing': ['TumorSequencing'],
-        'clinical_mol_linkage': ['ClinicalMolLinkage']  # Add this
-    }
-    
-    dfs = {}
-    for data_type, keywords in keyword_mapping.items():
-        # Find files that contain any of the keywords (case-insensitive)
-        matching_files = [f for f in files if any(kw.lower() in f.lower() for kw in keywords)]
-        
-        if not matching_files:
-            logger.warning(f"No file found for {data_type}")
-            continue
-        
-        if len(matching_files) > 1:
-            logger.warning(f"Multiple files found for {data_type}: {matching_files}. Using the first one.")
-        
-        # Use the first matching file
-        file_path = os.path.join(sub_dir, matching_files[0])
-        
+    warnings: List[str] = []
+
+    try:
+        normalised_dir = _find_normalised_dir(base_path)
+    except Exception as exc:
+        logger.error(exc)
+        warnings.append(str(exc))
+        return pd.DataFrame(), warnings
+
+    # Collect all clinical csv/xlsx files.
+    files = (
+        list(normalised_dir.glob("*.csv"))
+        + list(normalised_dir.glob("*.tsv"))
+        + list(normalised_dir.glob("*.xlsx"))
+    )
+    if not files:
+        msg = f"No clinical files found in {normalised_dir}"
+        logger.error(msg)
+        warnings.append(msg)
+        return pd.DataFrame(), warnings
+
+    dfs = []
+    for f in files:
         try:
-            df = pd.read_csv(file_path)
-            # Rename 'AvatarKey' to 'PATIENT_ID' if present (for compatibility)
-            if 'AvatarKey' in df.columns:
-                df = df.rename(columns={'AvatarKey': 'PATIENT_ID'})
-            dfs[data_type] = df
-            logger.info(f"Loaded {data_type} from {file_path}")
-        except Exception as e:
-            logger.error(f"Error loading {file_path}: {e}")
-    
-    return dfs
+            if f.suffix == ".xlsx":
+                dfs.append(pd.read_excel(f))
+            else:
+                dfs.append(pd.read_csv(f, sep=None, engine="python"))
+        except Exception as exc:
+            logger.error("Failed to read %s: %s", f.name, exc)
+            warnings.append(f"{f.name}: {exc}")
+
+    if not dfs:
+        return pd.DataFrame(), warnings
+
+    clinical = pd.concat(dfs, ignore_index=True, sort=False)
+    return clinical, warnings
 
 def convert_age(age):
     """Convert age to numeric value."""
