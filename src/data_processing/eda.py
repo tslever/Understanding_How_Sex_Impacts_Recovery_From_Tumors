@@ -18,12 +18,10 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from collections import defaultdict
 import contextlib
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
-with contextlib.suppress(OSError):
-    plt.style.use('seaborn-v0_8-whitegrid')
-else:
-    sns.set_theme(style = "whitegrid")
+
 try:
     from src.data_processing.utils import create_map_from_qc
 except ImportError:
@@ -121,6 +119,7 @@ def load_clinical_data(base_path):
             logger.error(f"Error loading {file_path}: {e}")
     
     return dfs
+
 def convert_age(age):
     """Convert age to numeric value."""
     if pd.isna(age):
