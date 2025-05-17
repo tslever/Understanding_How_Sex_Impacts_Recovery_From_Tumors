@@ -16,6 +16,7 @@ from sklearn.cluster import KMeans
 from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import PCA
 from sklearn.metrics import silhouette_score
+import warnings
 
 # Add parent directory to path to allow imports from other modules
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -56,7 +57,7 @@ class CD8Analysis(ImmuneAnalysis):
             print("\nCalculating CD8 signature scores...")
             
             # Initialize scores DataFrame
-            scores = pd.DataFrame(index=rnaseq_data.columns)
+            scores = pd.DataFrame(index = rnaseq_data.columns, dtype = float)
             
             # Calculate scores for each signature
             for signature, genes in self.signatures.items():
@@ -65,12 +66,11 @@ class CD8Analysis(ImmuneAnalysis):
                 
                 if len(signature_genes) == 0:
                     print(f"Warning: No genes found for signature {signature}")
-                    continue
-                
-                print(f"Calculating {signature} score using {len(signature_genes)} genes")
-                
-                # Calculate mean expression across genes
-                scores[signature] = rnaseq_data.loc[signature_genes].mean()
+                    scores[signature] = 0.0
+                else:
+                    print(f"Calculating {signature} score using {len(signature_genes)} genes")
+                    # Calculate mean expression across genes
+                    scores[signature] = rnaseq_data.loc[signature_genes].mean(axis = 0)
             
             # Save scores
             scores.to_csv(os.path.join(self.cd8_dir, 'cd8_signature_scores.csv'))
