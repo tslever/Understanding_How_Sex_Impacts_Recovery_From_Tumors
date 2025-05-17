@@ -11,7 +11,7 @@ from rpy2.robjects.conversion import localconverter
 import traceback
 
 # Import necessary function from data_loading
-from src.immune_analysis.data_loading import load_rnaseq_data, identify_melanoma_samples, load_melanoma_data
+from immune_analysis.data_loading import load_rnaseq_data, identify_melanoma_samples, load_melanoma_data
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -113,7 +113,7 @@ def process_melanoma_immune_data(base_path, output_dir=None):
         # Get the sample details that were returned by identify_melanoma_samples
         try:
             logger.info("Attempting to access enhanced sample details")
-            from src.immune_analysis.data_loading import identify_melanoma_samples
+            from immune_analysis.data_loading import identify_melanoma_samples
             melanoma_slids, sample_details = identify_melanoma_samples(base_path, clinical_data)
             logger.info(f"Successfully retrieved enhanced sample details for {len(sample_details)} samples")
         except Exception as e:
