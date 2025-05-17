@@ -34,5 +34,3 @@ output_old/sex_analysis
 output_old/*.csv
 src/processed_data
 src/icb_analysis/icb_analysis.py.bak
-tom_levers_temporary_environment
-src/Understanding_How_Sex_Impacts_Recovery_From_Tumors.egg-info
