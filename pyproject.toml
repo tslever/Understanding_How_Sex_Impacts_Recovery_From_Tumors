@@ -3,7 +3,7 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "codes"
+name = "Understanding_How_Sex_Impacts_Recovery_From_Tumors"
 version = "1.0.0"
 description = "ICI Sex Project: code for exploring sex-based differences in patient response to immune checkpoint inhibitors."
 readme = "README.md"
