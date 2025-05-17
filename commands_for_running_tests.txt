@@ -1,6 +1,7 @@
 git clone git@github.com:Shakeri-Lab/Understanding_How_Sex_Impacts_Recovery_From_Tumors.git
 cd Understanding_How_Sex_Impacts_Recovery_From_Tumors
 ./setup.sh
-pip install --editable .
-pip install pytest
+miniconda3/bin/conda init
+conda activate ici_sex
+[ -z "$CONDA_DEFAULT_ENV" ] && echo "inactive" || echo "active: $CONDA_DEFAULT_ENV"
 pytest

@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Set the project directory
-PROJECT_DIR="/project/orien/data/aws/24PRJ217UVA_IORIG/codes"
+PROJECT_DIR="/project/orien/data/aws/24PRJ217UVA_IORIG/Understanding_How_Sex_Impacts_Recovery_From_Tumors"
 CONDA_DIR="$PROJECT_DIR/miniconda3"
 
 # Download and install Miniconda if not already installed
