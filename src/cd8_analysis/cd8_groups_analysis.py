@@ -73,12 +73,11 @@ class CD8GroupAnalysis(CD8Analysis):
                 
                 if len(group_genes) == 0:
                     print(f"Warning: No genes found for group {group}")
-                    continue
-                
-                print(f"Calculating {group} score using {len(group_genes)} genes")
-                
-                # Calculate mean expression across genes
-                scores[group] = rnaseq_data.loc[group_genes].mean()
+                    scores[group] = 0.0
+                else:
+                    print(f"Calculating {group} score using {len(group_genes)} genes")
+                    # Calculate mean expression across genes
+                    scores[group] = rnaseq_data.loc[group_genes].mean()
             
             # Calculate ratio and log ratio
             if 'CD8_B' in scores.columns and 'CD8_G' in scores.columns:
@@ -91,7 +90,9 @@ class CD8GroupAnalysis(CD8Analysis):
             
             print(f"Calculated CD8 group scores for {len(scores)} samples")
             
-            return scores
+            wanted_cols = list(self.cd8_groups.keys())
+            
+            return pd.DataFrame(scores).reindex(wanted_cols, fill_value = 0.0).pipe(zscore, axis = 1).T
             
         except Exception as e:
             print(f"Error calculating group scores: {e}")
@@ -104,7 +105,11 @@ class CD8GroupAnalysis(CD8Analysis):
             print(f"\nClustering samples into {n_clusters} clusters...")
             
             # Select features for clustering
-            features = ['CD8_B', 'CD8_G']
+            features = ['CD8_A', 'CD8_B', 'CD8_C', 'CD8_D', 'CD8_E', 'CD8_F', 'CD8_G']
+            missing = [c for c in features if c not in scores.columns]
+            if missing:
+                logger.warning("Missing CD8 score columns %s - inserting zeros.", missing)
+                scores = scores.assign(**{c: 0.0 for c in missing})
             X = scores[features].values
             
             # Standardize features
