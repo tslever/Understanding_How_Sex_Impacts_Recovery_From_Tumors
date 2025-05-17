@@ -37,11 +37,18 @@ fi
 # Activate the environment
 conda activate ici_sex
 
+conda config --env --add channels conda-forge
+conda config --env --set channel_priority strict
+
 # Install required packages
 echo "Installing required packages..."
 conda install -y numpy matplotlib scikit-learn
 conda install -y pandas scipy
-conda install -y seaborn lifelines rpy2
+conda install -y seaborn rpy2
+if ! conda install -y lifelines; then
+    echo "lifelines not found on conda; installing with pip"
+    pip install lifelines
+fi
 conda install -y statsmodels
 
 # Install R and Bioconductor packages through conda
