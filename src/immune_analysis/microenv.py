@@ -21,6 +21,13 @@ logger = logging.getLogger(__name__)
 numpy2ri.activate()
 pandas2ri.activate()
 
+from immune_analysis.immune_analysis import ImmuneAnalysis as ImmuneAnalysis
+
+try:
+    __all__.append("ImmuneAnalysis")
+except NameError:
+    __all__ = ["ImmuneAnalysis"]
+
 # Define the standard xCell cell types/scores in their typical output order
 # Corrected 67 items list including Keratinocytes and Hepatocytes (kept for reference)
 # XCELL_CELL_TYPES_ORDERED = [
