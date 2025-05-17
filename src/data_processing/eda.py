@@ -17,9 +17,13 @@ import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 from collections import defaultdict
+import contextlib
 
 logger = logging.getLogger(__name__)
-plt.style.use('seaborn-v0_8-whitegrid')
+with contextlib.suppress(OSError):
+    plt.style.use('seaborn-v0_8-whitegrid')
+else:
+    sns.set_theme(style = "whitegrid")
 try:
     from src.data_processing.utils import create_map_from_qc
 except ImportError:
