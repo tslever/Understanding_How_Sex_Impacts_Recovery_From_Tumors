@@ -56,28 +56,59 @@ conda install -y -c bioconda bioconductor-biomart
 conda install -y -c bioconda bioconductor-org.hs.eg.db
 
 # Install xCell and prepare data
-conda run -n ici_sex R -e '
-  .libPaths(paste0(Sys.getenv("CONDA_PREFIX"), "/lib/R/library"));
-  if (!require("devtools")) install.packages("devtools", lib=.libPaths()[1]);
-  
-  # Install xCell from GitHub
-  devtools::install_github("dviraran/xCell", lib=.libPaths()[1], force=TRUE);
-  
-  # Download and save xCell data
-  library(xCell);
-  data_url <- "https://raw.githubusercontent.com/dviraran/xCell/master/data/xCell.data.rda";
-  data_path <- file.path(.libPaths()[1], "xCell", "data", "xCell.data.rda");
-  dir.create(dirname(data_path), recursive=TRUE, showWarnings=FALSE);
-  download.file(data_url, data_path);
-  
-  # Verify data
-  load(data_path);
-  if (exists("xCell.data")) {
-    print("xCell data loaded successfully");
-    print(paste("Number of reference genes:", length(xCell.data$genes)));
-  } else {
-    stop("Failed to load xCell data");
+echo "=== [3/4] Installing R package 'xCell' and reference data ================"
+
+ENV_NAME="ici_sex"
+
+conda run -n "$ENV_NAME" R --vanilla -s <<'RSCRIPT'
+options(repos = c(CRAN="https://cloud.r-project.org"))
+.libPaths(c(file.path(Sys.getenv("CONDA_PREFIX"), "lib/R/library"), .libPaths()))
+
+if (!requireNamespace("devtools", quietly = TRUE))
+    install.packages("devtools")
+if (!requireNamespace("curl", quietly = TRUE))
+    install.packages("curl")
+
+# (Re)install xCell from GitHub only if not already present
+if (!requireNamespace("xCell", quietly = TRUE)) {
+    devtools::install_github("dviraran/xCell", upgrade = "never", quiet = TRUE)
+}
+
+library(curl)
+library(xCell)
+
+data_url  <- "https://raw.githubusercontent.com/dviraran/xCell/master/data/xCell.data.rda"
+data_dir  <- file.path(.libPaths()[1], "xCell", "data")
+data_path <- file.path(data_dir, "xCell.data.rda")
+dir.create(data_dir, recursive = TRUE, showWarnings = FALSE)
+
+needs_download <- !file.exists(data_path) || file.info(data_path)$size < 1e5
+
+if (needs_download) {
+  message("Downloading xCell reference data ...")
+  tries <- 0; ok <- FALSE
+  while (tries < 5 && !ok) {
+    tries <- tries + 1
+    try({
+      curl_download(url = data_url,
+                    destfile = data_path,
+                    quiet = FALSE,
+                    handle = curl::new_handle("retry" = 5))
+      ok <- TRUE
+    }, silent = TRUE)
+    if (!ok) {
+      message("  -> Retry #", tries, " failed; sleeping ", tries * 3, " s")
+      Sys.sleep(tries * 3)
+    }
   }
-'
+  if (!ok) stop("Failed to retrieve xCell.data.rda after ", tries, " attempts")
+} else {
+  message("xCell reference data already present – skipping download")
+}
+
+load(data_path)
+stopifnot(exists("xCell.data"))
+message("xCell data loaded – ", length(xCell.data$genes), " reference genes available.")
+RSCRIPT
 
 echo "Environment setup complete!" 
