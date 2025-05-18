@@ -212,322 +212,53 @@ def get_stage_at_icb(patient_id, icb_start_age, melanoma_diag_df):
     return 'Unknown' # Final fallback
 
 def process_clinical_data(dfs, output_dir, qc_file_path=None):
-    """
-    Process clinical data to filter melanoma patients with sequencing data, ensuring one row per patient.
-    
-    Args:
-        dfs (dict): Dictionary of DataFrames containing 'patients', 'diagnoses', 'treatments', 'outcomes', 'sequencing', 'clinical_mol_linkage', and optionally 'vital_status'
-        output_dir (str): Directory to save the processed data
-        qc_file_path (str, optional): Path to QC metrics file for sample ID mapping
-    
-    Returns:
-        pd.DataFrame: Processed patient-level data with one row per patient
-    """
-    # Check for required data sources
-    required = ['patients', 'diagnoses', 'treatments', 'outcomes', 'sequencing', 'clinical_mol_linkage']
-    if not all(key in dfs for key in required):
-        missing = set(required) - set(dfs.keys())
-        logger.error(f"Missing required data sources: {', '.join(missing)}")
-        return pd.DataFrame()
+    """Process clinical data and create patient-level dataset."""
+    if not all(key in dfs for key in ['patients', 'diagnoses', 'treatments']):
+        logger.error("Missing required dataframes")
+        return None
 
-    # Step 1: Load diagnoses and filter ONLY for melanoma records upfront
+    # Start with patient master data
+    patients = dfs['patients'].copy()
+    
+    # Process treatments (medications) to identify ICB usage
+    treatments = dfs['treatments'].copy()
+    treatments['is_icb'] = treatments['Medication'].apply(classify_icb).notna()
+    
+    # Group by patient to determine ICB status and first ICB date
+    icb_summary = treatments[treatments['is_icb']].groupby('PATIENT_ID').agg({
+        'AgeAtMedStart': 'min',  # Get earliest ICB age
+        'is_icb': 'any'  # True if any ICB treatment
+    }).rename(columns={
+        'AgeAtMedStart': 'age_at_first_icb',
+        'is_icb': 'HAS_ICB'
+    })
+    
+    # Merge ICB information with patient data
+    patients = patients.merge(icb_summary, on='PATIENT_ID', how='left')
+    patients['HAS_ICB'] = patients['HAS_ICB'].fillna(False)
+    
+    # Process diagnoses
     diagnoses = dfs['diagnoses'].copy()
-    diagnoses['IsMelanoma'] = diagnoses['HistologyCode'].apply(lambda x: get_cancer_type(x) == 'Melanoma')
-    melanoma_diagnoses = diagnoses[diagnoses['IsMelanoma']].copy()
-    if melanoma_diagnoses.empty:
-        logger.warning("No diagnosis records found with melanoma histology codes.")
-        return pd.DataFrame()
-    melanoma_patients_from_diag = set(melanoma_diagnoses['PATIENT_ID'])
-    logger.info(f"Identified {len(melanoma_patients_from_diag)} patients with at least one melanoma diagnosis.")
-
-    # Step 2: Load and filter the clinical-molecular linkage file for melanoma samples
-    linkage = dfs['clinical_mol_linkage'].rename(columns={'ORIENAvatarKey': 'PATIENT_ID'})
-    # Use the corrected is_melanoma_histology_code function
-    melanoma_samples = linkage[linkage['Histology/Behavior'].apply(is_melanoma_histology_code)].copy()
-    melanoma_sequencing_patients = set(melanoma_samples['PATIENT_ID'])
-    logger.info(f"Identified {len(melanoma_sequencing_patients)} patients with melanoma-linked sequencing in ClinicalMolLinkage.")
-
-    # Step 3: Select patients present in BOTH sets
-    selected_patients = melanoma_patients_from_diag & melanoma_sequencing_patients
-    logger.info(f"Selected {len(selected_patients)} patients with both melanoma diagnosis AND melanoma-linked sequencing.")
-    if not selected_patients:
-        logger.warning("No patients remaining after intersection.")
-        return pd.DataFrame()
-
-    # Step 4: Filter the patients DataFrame
-    patients = dfs['patients'][dfs['patients']['PATIENT_ID'].isin(selected_patients)].copy()
+    melanoma_diagnoses = diagnoses[diagnoses['HistologyCode'].apply(get_cancer_type) == 'Melanoma']
     
-    # Convert patient age
-    patients['AgeAtClinicalRecordCreation'] = patients['AgeAtClinicalRecordCreation'].apply(convert_age)
+    # Get earliest melanoma diagnosis age for each patient
+    melanoma_age = melanoma_diagnoses.groupby('PATIENT_ID')['AgeAtDiagnosis'].min()
+    patients = patients.merge(melanoma_age.rename('age_at_melanoma_dx'), 
+                            on='PATIENT_ID', how='left')
     
-    # --- Aggregate MELANOMA diagnoses --- 
-    melanoma_diagnoses['AgeAtDiagnosis'] = melanoma_diagnoses['AgeAtDiagnosis'].apply(convert_age)
-    # Clean stage columns *before* aggregation
-    melanoma_diagnoses['CleanClinStage'] = melanoma_diagnoses['ClinGroupStage'].apply(clean_stage)
-    melanoma_diagnoses['CleanPathStage'] = melanoma_diagnoses['PathGroupStage'].apply(clean_stage)
-
-    # Aggregate only melanoma records
-    diag_agg = melanoma_diagnoses.groupby('PATIENT_ID').agg(
-        # Keep only melanoma histology codes
-        MelanomaHistologyCodes = ('HistologyCode', lambda x: list(x.unique())),
-        EarliestMelanomaDiagnosisAge = ('AgeAtDiagnosis', 'min'),
-        # Collect all unique cleaned melanoma stages
-        MelanomaClinStages = ('CleanClinStage', lambda x: list(x.unique())),
-        MelanomaPathStages = ('CleanPathStage', lambda x: list(x.unique()))
-    ).reset_index()
-    # Rename columns for clarity
-    # diag_agg.columns = ['PATIENT_ID', 'MelanomaHistologyCodes', 'EarliestMelanomaDiagnosisAge', 'MelanomaClinStages', 'MelanomaPathStages']
-    patients = patients.merge(diag_agg, on='PATIENT_ID', how='left')
-    # --- End Melanoma Diagnosis Aggregation ---
-
-    # Map sample IDs using QC file if provided
-    if qc_file_path:
-        id_map = create_map_from_qc(qc_file_path)
-        if not id_map:
-            print("Warning: Failed to create ID mapping from QC file.")
-            id_map = {}
-    else:
-        id_map = {}
+    # Get stage at ICB start
+    patients['stage_at_icb'] = patients.apply(
+        lambda x: get_stage_at_icb(x['PATIENT_ID'], 
+                                 x.get('age_at_first_icb'), 
+                                 melanoma_diagnoses), axis=1)
     
-    # --- Collect enhanced melanoma sequencing samples and details ---
-    patient_sequencing = defaultdict(list)
-    # Use the pre-filtered melanoma_samples DataFrame
-    for _, row in melanoma_samples[melanoma_samples['PATIENT_ID'].isin(selected_patients)].iterrows():
-        patient_id = row['PATIENT_ID']
-        collection_age = convert_age(row['Age At Specimen Collection'])
-        
-        # Extract additional specimen details
-        specimen_site = row.get('SpecimenSiteOfOrigin', 'Unknown')
-        histology = row.get('Histology/Behavior', 'Unknown')
-        
-        # Determine if sample is tumor or germline based on indicators in the data
-        # Assuming samples linked to melanoma histology are tumor samples
-        sample_type = 'Tumor'  # Default as tumor since we filtered for melanoma histology
-        
-        # Collect WES samples with enhanced details if available
-        if pd.notna(row['WES']) and pd.notna(row['WES'].strip()):
-            wes_id = row['WES'].strip()
-            patient_sequencing[patient_id].append({
-                'type': 'WES',
-                'id': wes_id,
-                'age': collection_age,
-                'site': specimen_site,
-                'histology': histology,
-                'sample_type': sample_type
-            })
-        
-        # Collect RNASeq samples with enhanced details if available
-        if pd.notna(row['RNASeq']) and pd.notna(row['RNASeq'].strip()):
-            rnaseq_id = row['RNASeq'].strip()
-            patient_sequencing[patient_id].append({
-                'type': 'RNASeq',
-                'id': rnaseq_id,
-                'age': collection_age,
-                'site': specimen_site,
-                'histology': histology,
-                'sample_type': sample_type
-            })
+    # Process sequencing data if available
+    if 'sequencing' in dfs:
+        patients['SequencingBeforeICB'] = patients.apply(get_sequencing_before_icb, axis=1)
     
-    # Log the enhanced patient_sequencing structure
-    logger.info(f"Collected detailed sequencing information for {len(patient_sequencing)} patients")
-    for patient_id, samples in list(patient_sequencing.items())[:3]:  # Log first 3 patients as examples
-        logger.info(f"Patient {patient_id}: {len(samples)} samples")
-        if samples:
-            logger.info(f"  Sample example: {samples[0]}")
+    # Additional processing as needed...
     
-    # --- Add enhanced sequencing information to patients DataFrame ---
-    # Helper function to extract specific sequencing details
-    def extract_sample_details(patient_id, detail_key):
-        samples = patient_sequencing.get(patient_id, [])
-        return str([sample.get(detail_key) for sample in samples])
-    
-    # Extract and add detailed sequencing information
-    patients['MelanomaSequencingSamples'] = patients['PATIENT_ID'].apply(
-        lambda x: str([f"{sample['type']}:{sample['id']}" for sample in patient_sequencing.get(x, [])])
-    )
-    patients['SequencingAges'] = patients['PATIENT_ID'].apply(
-        lambda x: str([sample['age'] for sample in patient_sequencing.get(x, [])])
-    )
-    patients['SequencingSites'] = patients['PATIENT_ID'].apply(
-        lambda x: extract_sample_details(x, 'site')
-    )
-    patients['SequencingHistologies'] = patients['PATIENT_ID'].apply(
-        lambda x: extract_sample_details(x, 'histology')
-    )
-    patients['SequencingSampleTypes'] = patients['PATIENT_ID'].apply(
-        lambda x: extract_sample_details(x, 'sample_type')
-    )
-    
-    # --- Determine if sequencing was before ICB ---
-    def get_sequencing_before_icb(row):
-        if row['HAS_ICB'] == 0:
-            # Check if SequencingAges is a valid list string before evaluating
-            try: ages = eval(row['SequencingAges']) 
-            except: ages = []
-            return str(['No ICB'] * len(ages)) if isinstance(ages, list) else str(['No ICB'])
-            
-        icb_start_age = row['ICB_START_AGE']
-        try: ages = eval(row['SequencingAges'])
-        except: ages = []
-        
-        if not isinstance(ages, list):
-             return str(['Error']) # Handle case where eval fails
-
-        return str([age < icb_start_age if pd.notna(age) and pd.notna(icb_start_age) else 'Unknown' 
-                for age in ages])
-    
-    patients['SequencingBeforeICB'] = patients.apply(get_sequencing_before_icb, axis=1)
-    
-    # --- Calculate Earliest Sequencing Age from Melanoma Samples --- 
-    earliest_melanoma_ages = {}
-    for patient_id, samples in patient_sequencing.items():
-        valid_ages = [sample['age'] for sample in samples if pd.notna(sample['age'])]
-        if valid_ages:
-            earliest_melanoma_ages[patient_id] = min(valid_ages)
-        else:
-            earliest_melanoma_ages[patient_id] = np.nan
-            
-    # Convert to Series and merge
-    earliest_age_series = pd.Series(earliest_melanoma_ages, name='EarliestSequencingAge')
-    earliest_age_series.index.name = 'PATIENT_ID'
-    patients = patients.merge(earliest_age_series, on='PATIENT_ID', how='left')
-    logger.info("Calculated 'EarliestSequencingAge' based on melanoma-linked samples from ClinicalMolLinkage.")
-    # --- End Earliest Sequencing Age Calculation ---
-
-    # Aggregate treatments
-    treatments = dfs['treatments'][dfs['treatments']['PATIENT_ID'].isin(selected_patients)].copy()
-    medication_col = next((col for col in ['Medication', 'TreatmentName', 'MedicationName', 'DrugName'] if col in treatments.columns), None)
-    patients['HAS_ICB'] = 0 # Initialize
-    patients['ICB_Treatments'] = [[] for _ in range(len(patients))] # Initialize as empty list
-    patients['ICB_START_AGE'] = np.nan # Initialize
-
-    if medication_col:
-        treatments['icb_drug'] = treatments[medication_col].apply(classify_icb)
-        icb_treatments = treatments[treatments['icb_drug'].notnull()].copy()
-        start_age_col = 'AgeAtMedStart'
-        if start_age_col in icb_treatments.columns:
-            icb_treatments[start_age_col] = icb_treatments[start_age_col].apply(convert_age)
-            # Aggregate ICB info per patient
-            icb_agg = icb_treatments.sort_values(start_age_col).groupby('PATIENT_ID').agg(
-                 ICB_Treatments_list = (medication_col, list), # Keep original list name
-                 ICB_START_AGE_agg = (start_age_col, 'min') # Keep original age name
-            ).reset_index()
-            # Merge ICB info into the main patients DataFrame
-            patients = patients.merge(icb_agg, on='PATIENT_ID', how='left') # Suffixes not needed if names differ
-            
-            # --- Corrected Update Logic --- 
-            # Update ICB info only for patients where the merge was successful
-            mask = patients['ICB_Treatments_list'].notna()
-            patients.loc[mask, 'ICB_Treatments'] = patients.loc[mask, 'ICB_Treatments_list']
-            patients.loc[mask, 'ICB_START_AGE'] = patients.loc[mask, 'ICB_START_AGE_agg']
-            patients.loc[mask, 'HAS_ICB'] = 1 # Update HAS_ICB only for those with a start age
-            
-            # Drop the temporary merge columns
-            patients = patients.drop(columns=['ICB_Treatments_list', 'ICB_START_AGE_agg'])
-            # --- End Corrected Update --- 
-        else:
-            logger.warning("No start age column in treatments.")
-    else:
-        logger.warning("No medication column in treatments.")
-    # --- End ICB Treatment Aggregation ---
-
-    # Calculate STAGE_AT_ICB using refined logic
-    patients['STAGE_AT_ICB'] = patients.apply(
-        lambda row: get_stage_at_icb(row['PATIENT_ID'], row['ICB_START_AGE'], melanoma_diagnoses),
-        axis=1
-    )
-
-    # For non-ICB patients, use diagnosis age as reference
-    patients['REFERENCE_AGE'] = patients['ICB_START_AGE'].fillna(patients['EarliestMelanomaDiagnosisAge'])
-    
-    # Aggregate outcomes
-    outcomes = dfs['outcomes'][dfs['outcomes']['PATIENT_ID'].isin(selected_patients)].copy()
-    outcomes['AgeAtCurrentDiseaseStatus'] = outcomes['AgeAtCurrentDiseaseStatus'].apply(convert_age)
-    outcomes = outcomes.sort_values('AgeAtCurrentDiseaseStatus', ascending=False).groupby('PATIENT_ID').first().reset_index()
-    outcome_cols = ['PATIENT_ID', 'CurrentDiseaseStatus', 'AgeAtCurrentDiseaseStatus']
-    patients = patients.merge(outcomes[outcome_cols], on='PATIENT_ID', how='left')
-    
-    # Compute OS_STATUS and OS_TIME using VitalStatus_V4.csv if available
-    if 'vital_status' in dfs:
-        vital = dfs['vital_status'][dfs['vital_status']['PATIENT_ID'].isin(selected_patients)].copy()
-        vital = vital.groupby('PATIENT_ID').first().reset_index()
-        patients = patients.merge(vital[['PATIENT_ID', 'VitalStatus', 'AgeAtLastContact']], on='PATIENT_ID', how='left')
-        
-        # --- OS Status Calculation ---
-        logger.info(f"Unique values in 'VitalStatus' column before mapping: {patients['VitalStatus'].unique()}")
-        logger.info(f"Value counts for 'VitalStatus':\n{patients['VitalStatus'].value_counts(dropna=False)}")
-
-        # Make mapping case-insensitive and strip whitespace
-        patients['VitalStatus_Upper'] = patients['VitalStatus'].str.upper().str.strip()
-        status_map = {'DECEASED': 1, 'LIVING': 0, 'DEAD': 1, 'ALIVE': 0}
-        patients['OS_STATUS'] = patients['VitalStatus_Upper'].map(status_map).fillna(0).astype(int) # Ensure integer type
-
-        # Log the result *after* mapping
-        logger.info(f"Unique values generated for 'OS_STATUS': {patients['OS_STATUS'].unique()}")
-        logger.info(f"Value counts for 'OS_STATUS':\n{patients['OS_STATUS'].value_counts(dropna=False)}")
-        patients = patients.drop(columns=['VitalStatus_Upper']) # Clean up temporary column
-        # --- End OS Status Calculation ---
-
-        patients['AgeAtLastContact'] = patients['AgeAtLastContact'].apply(convert_age)
-        patients['OS_TIME'] = (patients['AgeAtLastContact'] - patients['EarliestMelanomaDiagnosisAge']) * 12
-        patients.loc[patients['OS_TIME'] < 0, 'OS_TIME'] = np.nan
-    else:
-        logger.warning("No vital status data. Assuming all patients are alive.")
-    
-    # --- Add specific logging for target patient ---
-    target_patient_id = '7HU06PZK4Q' # Changed target patient
-    if target_patient_id in selected_patients:
-        logger.info(f"--- Debug Info for Patient: {target_patient_id} ---")
-        # Show their raw melanoma diagnoses
-        logger.info("Raw Melanoma Diagnoses:")
-        logger.info(melanoma_diagnoses[melanoma_diagnoses['PATIENT_ID'] == target_patient_id][['AgeAtDiagnosis', 'ClinGroupStage', 'PathGroupStage', 'HistologyCode']].sort_values('AgeAtDiagnosis').to_string())
-        
-        # Show their ICB treatment records (if any)
-        if target_patient_id in icb_treatments['PATIENT_ID'].values:
-             logger.info("ICB Treatment Records (Age/Medication):")
-             logger.info(icb_treatments[icb_treatments['PATIENT_ID'] == target_patient_id][[start_age_col, medication_col]].sort_values(start_age_col).to_string())
-        else:
-             logger.info("No ICB Treatment Records found for this patient.")
-             
-        # Show their linked sequencing info
-        logger.info("Linked Melanoma Sequencing Samples (Type, ID, AgeAtCollection):")
-        logger.info(str(patient_sequencing.get(target_patient_id, [])))
-        # Show the final aggregated row for this patient
-        logger.info("Final Aggregated Row in Output:")
-        logger.info(patients[patients['PATIENT_ID'] == target_patient_id].to_string())
-        logger.info("--- End Debug Info --- ")
-    else:
-         logger.info(f"Patient {target_patient_id} was not in the final selected cohort.")
-    # --- End Specific Logging ---
-
-    # --- Convert other list-like columns to strings for CSV storage --- 
-    # Moved here to ensure all list manipulations are done
-    list_cols_to_str = ['MelanomaHistologyCodes', 'MelanomaClinStages', 'MelanomaPathStages', 'ICB_Treatments']
-    for col in list_cols_to_str:
-         if col in patients.columns:
-              # Handle potential non-list items before converting to string
-              patients[col] = patients[col].apply(lambda x: str(x) if isinstance(x, list) else str([] if pd.isna(x) else x))
-    # --- End String Conversion ---
-
-    # Final cleanup - select and order columns for output
-    # Ensure all expected columns exist, handle potential missing ones gracefully
-    final_cols = [
-        'PATIENT_ID', 'AgeAtClinicalRecordCreation', 'YearOfClinicalRecordCreation', 'Sex', 'Race', 'Ethnicity',
-        'MelanomaHistologyCodes', 'EarliestMelanomaDiagnosisAge', 'MelanomaClinStages', 'MelanomaPathStages',
-        'ICB_Treatments', 'ICB_START_AGE', 'HAS_ICB', 'STAGE_AT_ICB', 'REFERENCE_AGE',
-        'CurrentDiseaseStatus', 'AgeAtCurrentDiseaseStatus', 'VitalStatus', 'AgeAtLastContact',
-        'OS_STATUS', 'OS_TIME', 'EarliestSequencingAge', 
-        'MelanomaSequencingSamples', 'SequencingAges', 'SequencingBeforeICB', 'SequencingSites', 'SequencingHistologies', 'SequencingSampleTypes'
-    ]
-    output_df = patients[[col for col in final_cols if col in patients.columns]].copy()
-
-    # Save output
-    os.makedirs(output_dir, exist_ok=True)
-    output_file = os.path.join(output_dir, 'melanoma_patients_with_sequencing.csv')
-    output_df.to_csv(output_file, index=False)
-    logger.info(f"Number of selected patients in final output: {len(output_df)}")
-    logger.info(f"Saved processed data to {output_file}")
-    return output_df
+    return patients
 
 def create_stage_simple(df, diag_df=None):
     """Deduce stage at ICB treatment start."""
